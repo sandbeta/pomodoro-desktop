@@ -1,6 +1,6 @@
 {
   "name": "pomodoro-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "一款温馨治愈的番茄钟桌面应用 · A cozy Pomodoro timer for desktop",
   "main": "./out/main/index.js",
   "author": "shafeifan",

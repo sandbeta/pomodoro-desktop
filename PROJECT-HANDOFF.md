@@ -1,6 +1,6 @@
 # 番茄钟桌面应用 · 项目交接文档
 
-> 最后更新：2026-09-24　状态：**M1–M4 + M6 打包完成，M5 与 README 待做**
+> 最后更新：2026-09-24　状态：**v0.2（M1–M6 全部）已交付，下一步 M7/ROADMAP**
 > 项目路径：`pomodoro-desktop/`（已整体迁移至 **E:\pomodoro-desktop**）
 
 ---
@@ -35,26 +35,34 @@
 ```
 pomodoro-desktop/
 ├─ .npmrc                         # 指向 npmmirror，含 electron 镜像配置（注意见 §6 的坑）
-├─ package.json                   # 脚本：dev / build / preview / dist
+├─ package.json                   # 脚本：dev / build / preview / dist；electron-builder build 字段
+├─ ROADMAP.md                     # 产品路线图（v0.1 已发 / v0.2 已发 / v0.3+ 候选）
 ├─ electron.vite.config.mjs       # electron-vite 三段式配置(main/preload/renderer)；renderer.server.host 固定 127.0.0.1（见 §6.7）
 ├─ test-timer.mjs                 # 计时纯逻辑的单元测试 (node test-timer.mjs)
 ├─ test-stats.mjs                 # 统计纯函数的单元测试 (node test-stats.mjs)
+├─ test-export.mjs                # 导出序列化的单元测试 (node test-export.mjs)
+├─ build/                         # 应用图标（icon.ico 多尺寸 BMP / icon.png 供托盘用）
 └─ src/
-   ├─ main/index.js               # Electron 主进程：建窗口、开发/生产加载、electron-store 历史库 + IPC(records:list/append)
-   ├─ preload/index.js            # contextBridge 暴露 electronAPI（records.list/append 已接 IPC，M5 继续扩展）
+   ├─ main/index.js               # 主进程：窗口、单实例锁、托盘、通知、设置/历史/导出 IPC、GPU 自适应策略
+   ├─ preload/index.js            # contextBridge：records(list/append/clear) + settings(get/set) + notify + exportSave
    └─ renderer/                   # React 前端
       ├─ index.html
       └─ src/
          ├─ main.jsx              # React 挂载入口
-         ├─ App.jsx               # 主界面（timer/stats 双视图切换，接 onPhaseComplete 落库）
-         ├─ index.css             # 设计 tokens + 全部视觉样式 + 动画（含统计看板样式）
+         ├─ App.jsx               # 三视图容器（timer 常挂载隐藏切换，防丢倒计时；ready 门控）
+         ├─ index.css             # 设计 tokens + 全部视觉样式 + 动画（含统计/设置/确认弹层）
          ├─ core/timer.js         # ★纯决策逻辑（阶段切换/长休息判定），无 React 依赖
          ├─ core/stats.js         # ★纯统计逻辑（日/周/月聚合、7 天分桶、时长格式化）
-         ├─ hooks/usePomodoro.js  # 计时引擎 hook（引用 core/timer + sound，记录阶段 startedAt）
+         ├─ core/export.js        # ★纯导出逻辑（toJson/toCsv 转义/defaultName）
+         ├─ hooks/usePomodoro.js  # 计时引擎 hook（settings 由外部驱动，记录阶段 startedAt）
          ├─ hooks/useStats.js     # 统计数据 hook（经 IPC 拉取/追加记录并聚合）
+         ├─ hooks/useSettings.js  # 设置 hook（主进程加载/保存，ready 标志）
          ├─ utils/sound.js        # Web Audio 提示音合成
+         ├─ components/TimerView.jsx     # 计时主界面（右上 📊/️ 双入口）
          ├─ components/ProgressRing.jsx  # SVG 圆环进度组件
-         └─ components/StatsPanel.jsx    # 统计看板（chart.js 柱状图 + 汇总卡片）
+         ├─ components/StatsPanel.jsx    # 统计看板（chart.js 柱状图 + 汇总卡片）
+         ├─ components/SettingsPanel.jsx # 设置面板（时长/行为开关/数据导出清空）
+         └─ components/Confirm.jsx       # 二次确认弹层（清空数据用）
 ```
 
 **分层原则（重要）**：所有「阶段该怎么切、什么时候长休息」的规则都收敛在 `core/timer.js` 这一个纯函数模块里，`usePomodoro.js` 和 `test-timer.mjs` 都依赖它。改切换逻辑只动这一处，且必须同步跑单测。
@@ -85,13 +93,23 @@ electron-vite 三段结构搭好，`npm run dev` 能弹出窗口、React 交互�
 - 持久化验证过：重启应用后记录完整恢复（实测 60 秒专注走完 → 落库 durationSec=60、gapSec=60，重启后仍在）。
 - **实现时踩到并已修的两个缺陷**（回归时留意别改回去）：① `registerIpc()` 定义后忘调用 → records:list 报 No handler；② 阶段 `startedAt`/`totalRef` 初始化缺失导致落库 durationSec=0 → 现在 `totalRef` 用 `durationFor(FOCUS, settings)` 初始化、start/toggle 时补记 `startedAtRef`。
 
+### ✅ M5（v0.2）— 托盘 / 通知 / 设置 / 数据导出
+- **设置体系**：`DEFAULT_SETTINGS` 不再硬编码，`hooks/useSettings.js` 启动时从主进程拉取（ready 门控），`SettingsPanel.jsx` 修改后 `settings:set` 落库（主进程白名单 + 数值 clamp 校验）。时长/longEvery/autoStart/sound/notify/minimizeToTray 全可配。
+- **计时视图**：抽成 `TimerView.jsx`，App 里**常挂载 + CSS 隐藏**切换三视图（timer/stats/settings），切去设置不会丢倒计时；且必须 ready 后才挂载，否则 usePomodoro 用默认时长初始化（实测踩过的坑）。
+- **托盘**：`Tray` + 右键菜单（显隐/退出），左键切显隐；`win.on('close')` 按 `minimizeToTray` 决定隐藏进托盘还是真退出（`isQuitting` 门控）；首次进托盘弹 balloon 提示。托盘图标用 `build/icon.png`（`nativeImage.createFromBuffer` 不认 asar 路径、不解析 ICO 流，PNG 最稳）。
+- **单实例锁**：`requestSingleInstanceLock` + `second-instance` 唤回窗口——托盘隐藏时再双击 exe 不会开出第二个实例（实测通过）。
+- **系统通知**：阶段结束走 `notify:send` IPC → 主进程 `Notification`，**窗口可见且聚焦时自动抑制**（前台不打扰），点击通知唤回窗口；`backgroundThrottling:false` 保证隐藏计时不被降频。
+- **数据导出/清空**：`core/export.js` 纯函数（toJson/toCsv 含 RFC 转义/defaultName）+ 5 组单测；落盘走 `dialog.showSaveDialog`（**必须先 `showWindow()` 再弹**，父窗口隐藏时对话框会挂起——实测踩过的坑）；清空走应用内二次确认弹层。
+- 实测：设置持久化跨重启生效（180:00 表盘）、1 分钟真实番茄走完自动落库+通知、关窗进托盘进程存活、二次启动唤回窗口、设置页/主界面渲染截图确认。
+- **v0.2.0 产物**：`dist\番茄钟-便携版-0.2.0.exe` / `番茄钟-安装包-0.2.0.exe`。
+
 ### ✅ M6（部分）— 打包出可双击的 exe
 - `package.json` 已补 electron-builder `build` 字段：appId `dev.shafeifan.pomodoro`、productName `番茄钟`、win 双目标（nsis + portable，均 x64）、图标 `build/icon.ico`、产物中文名。
 - 应用图标：程序化绘制的暖橘番茄（16/32/48/256 多尺寸 BMP 编码 ICO，见 §6.9 为何不能用 PNG-in-ICO），窗口标题栏与 exe 图标都有了。
 - 主进程加 `app.setName('pomodoro-desktop')`，让**开发版 / 安装包 / 便携版共用同一份** `Roaming\pomodoro-desktop\pomodoro-history.json` 历史记录。
-- `npm run dist` 产出：`dist\番茄钟-便携版-0.1.0.exe`（双击即用，78.5MB）、`dist\番茄钟-安装包-0.1.0.exe`（NSIS，可选安装目录+桌面快捷方式，78.7MB）。
+- `npm run dist` 产出（当前 v0.2.0）：`dist\番茄钟-便携版-0.2.0.exe`（双击即用，约 78MB）、`dist\番茄钟-安装包-0.2.0.exe`（NSIS，可选安装目录+桌面快捷方式）。
 - 便携版已实测：双击 → 窗口正常弹出、界面渲染、标题栏番茄图标正确。
-- **未完成**：README、LICENSE 文件内容、GitHub 仓库初始化（见 §7）。
+- **未完成**：GitHub 远程仓库与 Actions 自动发布（见 §7 / ROADMAP）。
 
 ---
 
@@ -106,9 +124,10 @@ env -u CHROME_CRASHPAD_PIPE_NAME -u ELECTRON_FORCE_RENDERER_ACCESSIBILITY npm ru
 # 生产构建（验证编译，产物在 out/）
 npm run build
 
-# 跑逻辑单测（计时 5 组 + 统计 7 组）
+# 跑逻辑单测（计时 5 组 + 统计 7 组 + 导出 5 组）
 node test-timer.mjs
 node test-stats.mjs
+node test-export.mjs
 
 # 打 Windows 双产物（安装包 + 便携版，需网络走镜像，见 §6.1/§6.9）
 # 前置：electron-builder 必须 ≥26（25.x 的 rcedit 缺陷见 §6.9）
@@ -185,27 +204,25 @@ npm run dist
 
 ## 7. 待办里程碑
 
-### ⬜ M5 — 托盘 / 通知 / 设置
-- 系统托盘常驻、阶段结束发系统 Notification（Electron `Notification` 或走主进程）。
-- 设置面板：自定义三档时长、`longEvery`、声音开关、`autoStart`。注意 `DEFAULT_SETTINGS` 目前是硬编码，做设置时要让它变成可由外部 state 驱动 `usePomodoro`。
+### ⬜ M7（v0.3 候选）— 差异化与留存
+见 ROADMAP.md：任务标签、每日目标+连续天数、治愈白噪音（Web Audio 合成）、多主题配色包。
 
 ### ⬜ M6（剩余）— 开源仓库收尾
-- README（含截图、功能、开发指南）、LICENSE 文件内容（package.json 已声明 MIT，缺 LICENSE 文件）。
-- 若开源：`.gitignore` 应排除 `dist/`；可选配 GitHub Actions 自动 release。
-- （安装包/便携版 exe 本身已产出并实测，见 §4 M6。）
+- README 截图待补（当前为纯文字版）；GitHub 远程仓库、Actions 自动 release。
+- （本地 git 仓库已建，v0.1/v0.2 代码与 ROADMAP 均已提交。）
 
 ---
 
 ## 8. 当前验证状态（事实 vs 判断）
 
-**已确认（事实）**：计时单测 5/5 + 统计单测 7/7 通过；`npm run build` 全绿；M4 端到端实测通过（完成落库 durationSec/startedAt 正确、非法数据被主进程拒收、重启后记录恢复、统计页卡片与图表渲染正常、双视图切换正常）；M3 界面已由需求方验收通过（2026-09-24）；**M6 打包实测通过**（便携版双击启动、窗口渲染、exe 与标题栏番茄图标正确、NSIS 安装包构建成功带 blockmap）。
+**已确认（事实）**：计时 5/5 + 统计 7/7 + 导出 5/5 单测通过；`npm run build` 全绿；M4/M5 端到端实测通过（完成落库、设置持久化跨重启生效、托盘关窗存活、单实例唤回、前台通知抑制、1 分钟真实番茄走完自动落库+通知、设置页与主界面截图渲染确认）；M3 界面已由需求方验收通过（2026-09-24）；**v0.2.0 打包实测通过**（便携版双击启动、双图标、exe 与标题栏番茄图标正确）。
 
-**待确认（不确定项）**：统计看板的**视觉观感**（卡片/图表/空状态在真实窗口里是否协调）尚未由需求方肉眼验收。
+**待确认（不确定项）**：① 导出保存对话框的「选择路径→确认写入」人工交互（自动化环境无法可靠操作模态框，IPC 链路与取消路径已验证）；② 托盘图标的目视确认（Win11 隐藏托盘区无法截图，但托盘对象创建与点击显隐逻辑已实测）；③ 设置页/统计页视觉观感细节待需求方验收。
 
 ---
 
 ## 9. 恢复工作的建议顺序
 
 1. 先清宿主注入的环境变量（§6.8 三条 unset）再跑 `npm run dev`；若报 `Electron uninstall`，照 §6.1 补二进制；若白屏/窗口不出现，对照 §6.7/§6.8 判别；若打包 rcedit 报错，对照 §6.9。
-2. 请需求方验收 M4 统计看板观感，反馈后微调。
-3. 然后进 M5（托盘/通知/设置面板），最后补 M6 剩余（README/LICENSE）。
+2. 请需求方人工点一遍 v0.2：设置改时长→导出 JSON/CSV→关窗进托盘→等通知，反馈后微调。
+3. 然后按 ROADMAP 进 M7（v0.3 候选功能），或先推 GitHub 远程补 M6 剩余。
