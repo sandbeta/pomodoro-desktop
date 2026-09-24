@@ -1,0 +1,64 @@
+{
+  "name": "pomodoro-desktop",
+  "version": "0.1.0",
+  "description": "一款温馨治愈的番茄钟桌面应用 · A cozy Pomodoro timer for desktop",
+  "main": "./out/main/index.js",
+  "author": "shafeifan",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "postinstall": "electron-builder install-app-deps",
+    "dist": "electron-vite build && electron-builder --win"
+  },
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "electron-store": "^11.0.2",
+    "react": "^18.3.1",
+    "react-chartjs-2": "^5.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^2.3.0",
+    "vite": "^5.4.11"
+  },
+  "build": {
+    "appId": "dev.shafeifan.pomodoro",
+    "productName": "番茄钟",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "artifactName": "番茄钟-安装包-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "番茄钟-便携版-${version}.exe"
+    }
+  }
+}

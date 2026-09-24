@@ -1,0 +1,11 @@
+node_modules/
+dist/
+out/
+*.local
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+# 某次命令变量未展开产生的垃圾目录（Windows 图标缓存），不入库，仅忽略
+/%SystemDrive%/
