@@ -24,10 +24,14 @@
 
 到 [Releases](https://github.com/sandbeta/pomodoro-desktop/releases) 下载，或自行构建（见下方「开发」），产物在 `dist/` 目录。
 
-| 文件 | 用法 |
+| 下载文件名 | 用法 |
 | --- | --- |
-| `番茄钟-便携版-x.y.z.exe` | 免安装，双击即用，可放 U 盘随身携带 |
-| `番茄钟-安装包-x.y.z.exe` | 常规安装，自动创建桌面 / 开始菜单快捷方式 |
+| `pomodoro-desktop-portable-x.y.z.exe` | 免安装，双击即用，可放 U 盘随身携带 |
+| `pomodoro-desktop-installer-x.y.z.exe` | 常规安装，自动创建桌面 / 开始菜单快捷方式 |
+
+> 下载文件名用 ASCII，是因为 GitHub 的资产上传 API 不接受非 ASCII 文件名（实测会 404）。
+> 自行 `npm run dist` 出的本地产物仍是中文名 `番茄钟-便携版-*.exe` / `番茄钟-安装包-*.exe`，
+> 应用内名称、开始菜单与桌面快捷方式也始终是「番茄钟」，不受影响。
 
 历史记录默认保存在 `%APPDATA%\pomodoro-desktop\pomodoro-history.json`，卸载重装不丢失。想多台机器共用同一份，可在「设置 → 数据 → 改存到别的目录」里把它指到你的同步文件夹（用 OneDrive 的话记得设为「始终保留在本设备」，否则未下载的文件只是个占位符）。
 

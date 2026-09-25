@@ -245,6 +245,11 @@ npm run dist
 13. **git 提交邮箱必须是 GitHub 认的那个**
     作者名可以是笔名（`shafeifan`），但 GitHub 靠**邮箱**关联账号。本机曾长期用 `shafeifan@users.noreply.local` 这种假域名，导致 commit 不亮头像、不计入贡献图。正确值是 `sandbeta@users.noreply.github.com`（账号是 **sandbeta**）。仓库已用 `git config user.email` 固定，历史也已重写修正。
 
+14. **Release 下载文件名必须是 ASCII，本地产物不是**
+    GitHub 的资产上传 API（`uploads.github.com/.../assets?name=…`）**不接受非 ASCII 文件名**：用 `gh release upload` 直接传 `番茄钟-便携版-0.3.0.exe` 会拿到 `HTTP 404`；而 softprops/action-gh-release 会先把名字按 URL 安全字符清洗 —— 两个中文名清洗后**塌缩成同一个 `-.-0.3.0.exe`**，互相覆盖只剩一个乱名资产，它随后去 PATCH 恢复原名时目标已不存在，报 404。
+    所以 `.github/workflows/release.yml` 在上传前把产物改名成 `pomodoro-desktop-portable-<ver>.exe` / `pomodoro-desktop-installer-<ver>.exe`，并在上传后做一次幂等清理（删掉不在预期列表里、也不是源码包的资产）。**网页 UI 拖拽走的是另一条路径，中文文件名反而没问题** —— 别用这个反例推翻上面的结论。
+    改名只发生在 CI 上传环节：`package.json` 的 `artifactName` 保持中文，本地 `npm run dist` 产物、应用内名称、开始菜单与桌面快捷方式都仍是「番茄钟」。
+
 ---
 
 ## 7. 待办里程碑
