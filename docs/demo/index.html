@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>番茄钟 · 网页演示</title>
+    <meta name="description" content="番茄钟桌面应用的网页演示版：计时、阶段流转、统计与设置全部可用，数据存在你自己的浏览器 localStorage 里，不联网、不上传。" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%85%3C/text%3E%3C/svg%3E" />
+    <style>
+      /* 与 Electron 窗口的 backgroundColor 对齐，使网页版观感与桌面版一致 */
+      html, body { background: #fff6ee; }
+    </style>
+    <script>
+      /*
+       * 网页演示层的 electronAPI 桩。
+       * 校验规则与 src/main/index.js 的主进程实现保持一致，
+       * 差别仅在于落盘点是 localStorage 而不是 userData 下的 JSON 文件。
+       */
+      (function () {
+        var SETTINGS_KEY = 'pomodoro-demo-settings'
+        var RECORDS_KEY = 'pomodoro-demo-records'
+
+        var SETTINGS_DEFAULTS = {
+          focus: 25, short: 5, long: 15, longEvery: 4,
+          autoStart: false, sound: true, notify: true, minimizeToTray: true
+        }
+        var SETTINGS_NUM = { focus: [1, 180], short: [1, 60], long: [1, 180], longEvery: [1, 10] }
+        var SETTINGS_BOOL = ['autoStart', 'sound', 'notify', 'minimizeToTray']
+        var VALID_MODES = { focus: 1, short: 1, long: 1 }
+        var MAX_RECORDS = 20000
+
+        function read(key, fallback) {
+          try {
+            var raw = localStorage.getItem(key)
+            return raw ? JSON.parse(raw) : fallback
+          } catch (e) {
+            return fallback
+          }
+        }
+
+        function sanitizeSettings(raw) {
+          var out = {}
+          if (!raw || typeof raw !== 'object') return out
+          for (var k in SETTINGS_NUM) {
+            if (raw[k] !== undefined) {
+              var n = Number(raw[k])
+              if (isFinite(n)) out[k] = Math.min(SETTINGS_NUM[k][1], Math.max(SETTINGS_NUM[k][0], Math.round(n)))
+            }
+          }
+          for (var i = 0; i < SETTINGS_BOOL.length; i++) {
+            var b = SETTINGS_BOOL[i]
+            if (raw[b] !== undefined) out[b] = !!raw[b]
+          }
+          return out
+        }
+
+        function effectiveSettings() {
+          return Object.assign({}, SETTINGS_DEFAULTS, read(SETTINGS_KEY, {}))
+        }
+
+        window.electronAPI = {
+          ping: function () { return 'pong' },
+          meta: { platform: 'web', versions: {} },
+          records: {
+            list: async function () { return read(RECORDS_KEY, []) },
+            append: async function (rec) {
+              if (
+                !rec ||
+                !VALID_MODES[rec.mode] ||
+                typeof rec.startedAt !== 'number' ||
+                typeof rec.endedAt !== 'number' ||
+                typeof rec.durationSec !== 'number'
+              ) {
+                return false
+              }
+              var records = read(RECORDS_KEY, [])
+              records.push(Object.assign({}, rec, {
+                id: String(rec.id != null ? rec.id : Date.now()),
+                completed: rec.completed === true
+              }))
+              try {
+                localStorage.setItem(RECORDS_KEY, JSON.stringify(records.slice(-MAX_RECORDS)))
+              } catch (e) {
+                return false
+              }
+              return true
+            },
+            clear: async function () {
+              localStorage.setItem(RECORDS_KEY, '[]')
+              return true
+            }
+          },
+          settings: {
+            get: async function () { return effectiveSettings() },
+            set: async function (patch) {
+              var clean = sanitizeSettings(patch)
+              localStorage.setItem(SETTINGS_KEY, JSON.stringify(Object.assign(read(SETTINGS_KEY, {}), clean)))
+              return effectiveSettings()
+            }
+          },
+          // 桌面版在窗口可见且聚焦时本就抑制通知，网页标签页正对应这一状态，故如实返回 false
+          notify: async function () { return false },
+          // 桌面版走系统保存对话框，网页版用浏览器下载替代
+          exportSave: async function (name, content) {
+            try {
+              var blob = new Blob([String(content == null ? '' : content)], { type: 'text/plain;charset=utf-8' })
+              var url = URL.createObjectURL(blob)
+              var a = document.createElement('a')
+              a.href = url
+              a.download = String(name || 'pomodoro-history.json')
+              document.body.appendChild(a)
+              a.click()
+              a.remove()
+              setTimeout(function () { URL.revokeObjectURL(url) }, 4000)
+              return { ok: true, path: a.download }
+            } catch (e) {
+              return { ok: false, error: e.message }
+            }
+          }
+        }
+      })()
+    </script>
+    <script type="module" crossorigin src="./assets/index-Duwhv4Xq.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BLXN1j-v.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
