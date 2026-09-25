@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>番茄钟 · 网页演示</title>
-    <meta name="description" content="番茄钟桌面应用的网页演示版：计时、阶段流转、统计与设置全部可用，数据存在你自己的浏览器 localStorage 里，不联网、不上传。" />
+    <meta name="description" content="番茄钟桌面应用的网页演示版：计时、阶段流转、中断记录、统计与设置全部可用，数据存在你自己的浏览器 localStorage 里，不联网、不上传。" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%85%3C/text%3E%3C/svg%3E" />
     <style>
       /* 与 Electron 窗口的 backgroundColor 对齐，使网页版观感与桌面版一致 */
@@ -14,7 +14,10 @@
       /*
        * 网页演示层的 electronAPI 桩。
        * 校验规则与 src/main/index.js 的主进程实现保持一致，
-       * 差别仅在于落盘点是 localStorage 而不是 userData 下的 JSON 文件。
+       * 差别仅在于落盘点是 localStorage 而不是 JSON 文件。
+       *
+       * 有意不暴露 data.pickDir：浏览器没有「把历史文件搬到同步目录」这回事，
+       * 设置面板会因此自动隐藏「改存到别的目录」按钮，而不是显示一个点了没反应的控件。
        */
       (function () {
         var SETTINGS_KEY = 'pomodoro-demo-settings'
@@ -22,7 +25,7 @@
 
         var SETTINGS_DEFAULTS = {
           focus: 25, short: 5, long: 15, longEvery: 4,
-          autoStart: false, sound: true, notify: true, minimizeToTray: true
+          autoStart: false, sound: true, notify: true, minimizeToTray: true, dataDir: ''
         }
         var SETTINGS_NUM = { focus: [1, 180], short: [1, 60], long: [1, 180], longEvery: [1, 10] }
         var SETTINGS_BOOL = ['autoStart', 'sound', 'notify', 'minimizeToTray']
@@ -36,6 +39,25 @@
           } catch (e) {
             return fallback
           }
+        }
+
+        // 与主进程 cleanRecord 同构：逐字段白名单，不合法返回 null
+        function cleanRecord(rec) {
+          if (!rec || typeof rec !== 'object') return null
+          if (!VALID_MODES[rec.mode]) return null
+          if (typeof rec.startedAt !== 'number' || !isFinite(rec.startedAt)) return null
+          if (typeof rec.endedAt !== 'number' || !isFinite(rec.endedAt)) return null
+          if (typeof rec.durationSec !== 'number' || !isFinite(rec.durationSec)) return null
+          var out = {
+            id: rec.id === undefined || rec.id === null ? String(Date.now()) : String(rec.id),
+            mode: rec.mode,
+            startedAt: rec.startedAt,
+            endedAt: rec.endedAt,
+            durationSec: rec.durationSec,
+            completed: rec.completed === true
+          }
+          if (typeof rec.elapsedSec === 'number' && isFinite(rec.elapsedSec)) out.elapsedSec = rec.elapsedSec
+          return out
         }
 
         function sanitizeSettings(raw) {
@@ -58,36 +80,61 @@
           return Object.assign({}, SETTINGS_DEFAULTS, read(SETTINGS_KEY, {}))
         }
 
+        function writeRecords(list) {
+          try {
+            localStorage.setItem(RECORDS_KEY, JSON.stringify(list.slice(-MAX_RECORDS)))
+            return true
+          } catch (e) {
+            return false
+          }
+        }
+
         window.electronAPI = {
           ping: function () { return 'pong' },
           meta: { platform: 'web', versions: {} },
           records: {
             list: async function () { return read(RECORDS_KEY, []) },
             append: async function (rec) {
-              if (
-                !rec ||
-                !VALID_MODES[rec.mode] ||
-                typeof rec.startedAt !== 'number' ||
-                typeof rec.endedAt !== 'number' ||
-                typeof rec.durationSec !== 'number'
-              ) {
-                return false
-              }
+              var clean = cleanRecord(rec)
+              if (!clean) return false
               var records = read(RECORDS_KEY, [])
-              records.push(Object.assign({}, rec, {
-                id: String(rec.id != null ? rec.id : Date.now()),
-                completed: rec.completed === true
-              }))
-              try {
-                localStorage.setItem(RECORDS_KEY, JSON.stringify(records.slice(-MAX_RECORDS)))
-              } catch (e) {
-                return false
-              }
-              return true
+              records.push(clean)
+              return writeRecords(records)
+            },
+            replace: async function (list) {
+              if (!Array.isArray(list)) return { ok: false, error: '不是数组' }
+              var clean = list.map(cleanRecord).filter(Boolean)
+              writeRecords(clean)
+              return { ok: true, count: clean.length, dropped: list.length - clean.length }
             },
             clear: async function () {
               localStorage.setItem(RECORDS_KEY, '[]')
               return true
+            },
+            where: async function () {
+              return '浏览器本地存储 · ' + RECORDS_KEY
+            }
+          },
+          data: {
+            // 浏览器里用文件选择替代原生对话框，导入桌面版导出的 JSON 因此真的可用
+            openJson: function () {
+              return new Promise(function (resolve) {
+                var input = document.createElement('input')
+                input.type = 'file'
+                input.accept = '.json,application/json'
+                input.style.display = 'none'
+                input.onchange = function () {
+                  var f = input.files && input.files[0]
+                  if (!f) { resolve({ ok: false, canceled: true }); return }
+                  var fr = new FileReader()
+                  fr.onload = function () { resolve({ ok: true, path: f.name, text: String(fr.result) }) }
+                  fr.onerror = function () { resolve({ ok: false, error: '读取文件失败' }) }
+                  fr.readAsText(f, 'utf8')
+                }
+                document.body.appendChild(input)
+                input.click()
+                setTimeout(function () { input.remove() }, 1000)
+              })
             }
           },
           settings: {
@@ -120,8 +167,8 @@
         }
       })()
     </script>
-    <script type="module" crossorigin src="./assets/index-Duwhv4Xq.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BLXN1j-v.css">
+    <script type="module" crossorigin src="./assets/index-DLwbxkmv.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-B6RMYR0-.css">
   </head>
   <body>
     <div id="root"></div>

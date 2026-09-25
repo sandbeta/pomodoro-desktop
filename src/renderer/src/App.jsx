@@ -16,7 +16,7 @@ export default function App() {
   const stats = useStats()
   const { settings, ready, save, bridge } = useSettings()
 
-  // 阶段自然走完 -> 落一条历史记录 + 发系统通知（跳过/重置不会走到这里）
+  // 阶段结束 -> 落一条历史记录；只有真正走完才打扰用户，中断不弹「完成」通知
   const handlePhaseComplete = useCallback(
     (info) => {
       stats.appendRecord({
@@ -24,8 +24,10 @@ export default function App() {
         startedAt: info.startedAt,
         endedAt: info.at,
         durationSec: info.durationSec,
+        elapsedSec: info.elapsedSec,
         completed: info.completed === true
       })
+      if (info.completed !== true) return
       const t = NOTIFY_TEXT[info.mode]
       if (t && window.electronAPI?.notify) window.electronAPI.notify(t.title, t.body)
     },
@@ -54,6 +56,7 @@ export default function App() {
         <StatsPanel
           summary={stats.summary}
           daily={stats.daily}
+          interrupt={stats.interrupt}
           bridge={stats.bridge}
           onBack={() => {
             stats.refresh()

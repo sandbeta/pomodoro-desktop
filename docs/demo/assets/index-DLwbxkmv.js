@@ -7029,6 +7029,46 @@ function dailyFocusBuckets(records, days = 7, now = Date.now()) {
   }
   return out;
 }
+function interruptStats(records, days = 7, now = Date.now()) {
+  const from2 = new Date(now);
+  from2.setHours(0, 0, 0, 0);
+  from2.setDate(from2.getDate() - (days - 1));
+  const fromTs = from2.getTime();
+  let completed = 0;
+  let interrupted = 0;
+  let elapsedSum = 0;
+  const perMinute = /* @__PURE__ */ new Map();
+  for (const r2 of records || []) {
+    if (!r2 || r2.mode !== "focus") continue;
+    if (!(r2.startedAt >= fromTs)) continue;
+    if (r2.completed === true) {
+      completed++;
+      continue;
+    }
+    interrupted++;
+    const sec = Number.isFinite(r2.elapsedSec) && r2.elapsedSec > 0 ? r2.elapsedSec : 0;
+    elapsedSum += sec;
+    const min = Math.max(1, Math.round(sec / 60));
+    perMinute.set(min, (perMinute.get(min) || 0) + 1);
+  }
+  const total = completed + interrupted;
+  let peakMinute = null;
+  let peakCount = 0;
+  for (const [min, c] of [...perMinute.entries()].sort((a, b) => a[0] - b[0])) {
+    if (c > peakCount) {
+      peakCount = c;
+      peakMinute = min;
+    }
+  }
+  return {
+    completed,
+    interrupted,
+    total,
+    ratio: total ? interrupted / total : 0,
+    avgElapsedSec: interrupted ? elapsedSum / interrupted : 0,
+    peakMinute
+  };
+}
 function fmtDuration(minutes) {
   if (minutes <= 0) return "0 分钟";
   if (minutes < 60) return `${Math.round(minutes)} 分钟`;
@@ -7067,7 +7107,8 @@ function useStats() {
   );
   const summary = summarize(records);
   const daily = dailyFocusBuckets(records, 7);
-  return { records, summary, daily, loading, refresh, appendRecord, bridge: hasBridge };
+  const interrupt = interruptStats(records, 7);
+  return { records, summary, daily, interrupt, loading, refresh, appendRecord, bridge: hasBridge };
 }
 const DEFAULT_SETTINGS$1 = {
   focus: 25,
@@ -7275,6 +7316,22 @@ function usePomodoro(settings = DEFAULT_SETTINGS, onPhaseComplete) {
     if (next.focusCount !== focusCount) setFocusCount(next.focusCount);
     gotoPhase(next.mode, false);
   }, [mode, focusCount, settings, gotoPhase]);
+  const markInterrupted = reactExports.useCallback(() => {
+    if (startedAtRef.current && mode === FOCUS) {
+      const at = Date.now();
+      cbRef.current?.({
+        mode,
+        at,
+        startedAt: startedAtRef.current,
+        durationSec: totalRef.current,
+        elapsedSec: Math.max(0, totalRef.current - remaining),
+        completed: false
+      });
+    }
+    const next = advanceOnSkip({ mode, focusCount });
+    if (next.focusCount !== focusCount) setFocusCount(next.focusCount);
+    gotoPhase(next.mode, false);
+  }, [mode, focusCount, remaining, settings, gotoPhase]);
   const resetCount = reactExports.useCallback(() => {
     setFocusCount(0);
     gotoPhase(FOCUS, false);
@@ -7293,6 +7350,7 @@ function usePomodoro(settings = DEFAULT_SETTINGS, onPhaseComplete) {
     toggle,
     reset,
     skip: skip2,
+    markInterrupted,
     resetCount
   };
 }
@@ -7334,6 +7392,7 @@ const RING_COLOR = { focus: "#E8685A", short: "#6BA368", long: "#5B8FB0" };
 function TimerView({ settings, onPhaseComplete, onOpenStats, onOpenSettings }) {
   const p2 = usePomodoro(settings, onPhaseComplete);
   const litDots = p2.focusCount % settings.longEvery;
+  const hasProgress = p2.running || p2.remaining !== p2.total;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `stage mode-${p2.mode}`, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "halo" }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "top-actions", children: [
@@ -7352,6 +7411,7 @@ function TimerView({ settings, onPhaseComplete, onOpenStats, onOpenSettings }) {
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: p2.toggle, children: p2.running ? "暂停一下" : "开始专注" }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "controls-sub", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-ghost", onClick: p2.reset, children: "重置" }),
+        hasProgress && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-ghost", onClick: p2.markInterrupted, title: "记下这次被打断了，然后进入下一阶段", children: "标记中断" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-ghost", onClick: p2.skip, children: "跳过" })
       ] })
     ] }),
@@ -19463,7 +19523,7 @@ const CARDS = [
   { key: "week", label: "本周", emoji: "🌿" },
   { key: "month", label: "本月", emoji: "🍀" }
 ];
-function StatsPanel({ summary, daily, onBack, bridge }) {
+function StatsPanel({ summary, daily, interrupt, onBack, bridge }) {
   const chartData = reactExports.useMemo(
     () => ({
       labels: daily.map((d) => d.label),
@@ -19541,14 +19601,26 @@ function StatsPanel({ summary, daily, onBack, bridge }) {
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "stats-chart-title", children: "近 7 天专注（分钟）" }),
       hasData ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "stats-chart-box", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Bar, { data: chartData, options }) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stats-empty", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "stats-empty-emoji", children: "🌱" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { children: "还没有专注记录" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { children: "还没有走完的番茄" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "stats-empty-sub", children: "完成第一个番茄后，这里会长出小图表" })
       ] })
+    ] }),
+    interrupt && interrupt.total > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stats-interrupt", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stats-interrupt-figure", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "stats-interrupt-num", children: interrupt.interrupted }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "stats-interrupt-unit", children: [
+          "次专注被打断",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: "近 7 天" })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "stats-interrupt-note", children: interrupt.interrupted === 0 ? "没有一个番茄中途断掉，这很难得。" : interrupt.peakMinute ? `多数倒在第 ${interrupt.peakMinute} 分钟。那个点通常不是你不够专心，是真的有事来了。` : "被打断的时刻很零散，说明干扰还没成规律 —— 先记着，别急着改。" })
     ] }),
     !bridge && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "stats-hint", children: "⚠️ 当前环境未连接到本地存储，统计仅供预览" })
   ] });
 }
 const MODE_CN = { focus: "专注", short: "短休息", long: "长休息" };
+const VALID_MODES = /* @__PURE__ */ new Set(["focus", "short", "long"]);
+const SCHEMA_VERSION = 2;
 function localISO(ts) {
   const d = new Date(ts);
   const pad = (n2) => String(n2).padStart(2, "0");
@@ -19556,7 +19628,7 @@ function localISO(ts) {
 }
 function toJson(records) {
   return JSON.stringify(
-    { app: "pomodoro-desktop", version: 1, exportedAt: localISO(Date.now()), count: records.length, records },
+    { app: "pomodoro-desktop", version: SCHEMA_VERSION, exportedAt: localISO(Date.now()), count: records.length, records },
     null,
     2
   );
@@ -19566,7 +19638,7 @@ function csvCell(v2) {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 function toCsv(records) {
-  const header = ["id", "mode", "started_at", "ended_at", "duration_sec", "completed"];
+  const header = ["id", "mode", "started_at", "ended_at", "duration_sec", "elapsed_sec", "completed"];
   const lines = [header.join(",")];
   for (const r2 of records) {
     lines.push(
@@ -19576,6 +19648,7 @@ function toCsv(records) {
         csvCell(localISO(r2.startedAt)),
         csvCell(localISO(r2.endedAt)),
         csvCell(r2.durationSec),
+        csvCell(r2.elapsedSec ?? ""),
         r2.completed ? "true" : "false"
       ].join(",")
     );
@@ -19586,6 +19659,64 @@ function defaultName(kind) {
   const d = /* @__PURE__ */ new Date();
   const pad = (n2) => String(n2).padStart(2, "0");
   return `番茄钟记录-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.${kind}`;
+}
+function recordKey(r2) {
+  return `${r2.startedAt}|${r2.mode}|${r2.durationSec}`;
+}
+function normalizeRecord(r2) {
+  if (!r2 || typeof r2 !== "object") return null;
+  if (!VALID_MODES.has(r2.mode)) return null;
+  if (typeof r2.startedAt !== "number" || !Number.isFinite(r2.startedAt)) return null;
+  if (typeof r2.endedAt !== "number" || !Number.isFinite(r2.endedAt)) return null;
+  if (typeof r2.durationSec !== "number" || !Number.isFinite(r2.durationSec)) return null;
+  const out = {
+    id: r2.id === void 0 || r2.id === null ? String(r2.startedAt) : String(r2.id),
+    mode: r2.mode,
+    startedAt: r2.startedAt,
+    endedAt: r2.endedAt,
+    durationSec: r2.durationSec,
+    completed: r2.completed === true
+  };
+  if (typeof r2.elapsedSec === "number" && Number.isFinite(r2.elapsedSec)) out.elapsedSec = r2.elapsedSec;
+  return out;
+}
+function fromExport(text) {
+  let data;
+  try {
+    data = JSON.parse(String(text ?? ""));
+  } catch (e) {
+    return { ok: false, error: "不是合法的 JSON 文件", records: [], skipped: 0 };
+  }
+  const list = Array.isArray(data) ? data : Array.isArray(data?.records) ? data.records : null;
+  if (!list) return { ok: false, error: "文件里找不到 records 数组", records: [], skipped: 0 };
+  const records = [];
+  let skipped = 0;
+  for (const raw of list) {
+    const clean = normalizeRecord(raw);
+    if (clean) records.push(clean);
+    else skipped++;
+  }
+  const version2 = Array.isArray(data) ? SCHEMA_VERSION : Number(data.version) || 1;
+  const warning = version2 > SCHEMA_VERSION ? `文件版本 ${version2} 高于本程序认识的 ${SCHEMA_VERSION}，未知字段会被忽略` : "";
+  return { ok: true, records, skipped, version: version2, warning };
+}
+function mergeRecords(existing, incoming) {
+  const byKey = /* @__PURE__ */ new Map();
+  for (const r2 of existing || []) {
+    const clean = normalizeRecord(r2);
+    if (clean) byKey.set(recordKey(clean), clean);
+  }
+  let added = 0;
+  for (const r2 of incoming || []) {
+    const clean = normalizeRecord(r2);
+    if (!clean) continue;
+    const k2 = recordKey(clean);
+    if (byKey.has(k2)) continue;
+    byKey.set(k2, clean);
+    added++;
+  }
+  const all = [...byKey.values()].sort((a, b) => a.startedAt - b.startedAt);
+  return { records: all.slice(-2e4), added, total: all.length };
 }
 function Confirm({ text, confirmLabel = "确认", danger = true, onOk, onCancel }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "confirm-mask", onClick: onCancel, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "confirm-card", onClick: (e) => e.stopPropagation(), children: [
@@ -19695,6 +19826,45 @@ function SettingsPanel({ settings, onSave, onBack, bridge, records, onRecordsCha
     onRecordsChanged();
     flash("记录已清空");
   };
+  const [dataPath, setDataPath] = reactExports.useState("");
+  const canPickDir = typeof window !== "undefined" && !!window.electronAPI?.data?.pickDir;
+  const canImport = typeof window !== "undefined" && !!window.electronAPI?.data?.openJson;
+  const refreshPath = reactExports.useCallback(() => {
+    window.electronAPI?.records?.where?.().then((p2) => setDataPath(String(p2 || ""))).catch(() => {
+    });
+  }, []);
+  reactExports.useEffect(() => {
+    refreshPath();
+  }, [refreshPath]);
+  const doImport = async () => {
+    const res = await window.electronAPI.data.openJson();
+    if (res?.canceled) return;
+    if (!res?.ok) return flash(res?.error || "无法读取该文件");
+    const parsed = fromExport(res.text);
+    if (!parsed.ok) return flash(parsed.error);
+    if (!parsed.records.length) return flash("文件里没有可用记录");
+    const cur = await window.electronAPI.records.list();
+    const m2 = mergeRecords(cur, parsed.records);
+    await window.electronAPI.records.replace(m2.records);
+    onRecordsChanged();
+    flash(`已导入 ${m2.added} 条${parsed.skipped ? ` · 跳过 ${parsed.skipped} 条不合格式` : ""}`);
+  };
+  const switchDir = async (dir) => {
+    const before = await window.electronAPI.records.list();
+    const ok2 = await onSave({ dataDir: dir });
+    if (!ok2) return flash("切换失败");
+    const after = await window.electronAPI.records.list();
+    const m2 = mergeRecords(before, after);
+    await window.electronAPI.records.replace(m2.records);
+    onRecordsChanged();
+    refreshPath();
+    flash(dir ? "记录目录已切换" : "已回到默认目录");
+  };
+  const doChangeDir = async () => {
+    const pick = await window.electronAPI.data.pickDir();
+    if (!pick?.ok) return;
+    await switchDir(pick.path);
+  };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-view", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stats-head", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-back", onClick: onBack, children: "← 返回" }),
@@ -19725,12 +19895,22 @@ function SettingsPanel({ settings, onSave, onBack, bridge, records, onRecordsCha
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "set-data-row", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-ghost", onClick: () => doExport("json"), children: "导出 JSON" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-ghost", onClick: () => doExport("csv"), children: "导出 CSV" }),
+        canImport && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-ghost", onClick: doImport, children: "导入…" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-danger btn-sm", onClick: doClear, children: "清空记录" })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "set-note", children: [
         "共 ",
         records?.length || 0,
         " 条记录 · 全部保存在本机，不会上传。"
+      ] }),
+      dataPath && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "set-datadir", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "set-label", children: "历史记录文件" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "set-path", title: dataPath, children: dataPath }),
+        canPickDir && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "set-data-row", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-ghost", onClick: doChangeDir, children: "改存到别的目录…" }),
+          !!settings.dataDir && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-ghost", onClick: () => switchDir(""), children: "回到默认目录" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "set-note", children: "把这个文件放进 Dropbox / iCloud / Syncthing 的同步目录，就能多台机器共用同一份历史， 不需要账号也没有后端。用 OneDrive 的话请把该文件夹设为「始终保留在本设备」—— 它的「按需文件」在未下载时只是个占位符，读起来会失败。" })
       ] })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "set-foot", children: savedTip }),
@@ -19753,8 +19933,10 @@ function App() {
         startedAt: info.startedAt,
         endedAt: info.at,
         durationSec: info.durationSec,
+        elapsedSec: info.elapsedSec,
         completed: info.completed === true
       });
+      if (info.completed !== true) return;
       const t2 = NOTIFY_TEXT[info.mode];
       if (t2 && window.electronAPI?.notify) window.electronAPI.notify(t2.title, t2.body);
     },
@@ -19779,6 +19961,7 @@ function App() {
       {
         summary: stats.summary,
         daily: stats.daily,
+        interrupt: stats.interrupt,
         bridge: stats.bridge,
         onBack: () => {
           stats.refresh();

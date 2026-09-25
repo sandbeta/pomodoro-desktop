@@ -115,6 +115,29 @@ export function usePomodoro(settings = DEFAULT_SETTINGS, onPhaseComplete) {
     gotoPhase(next.mode, false)
   }, [mode, focusCount, settings, gotoPhase])
 
+  /**
+   * 标记中断：把「被打断」如实记成一条 completed:false 的记录，再进入下一阶段。
+   * 与「跳过」的区别只在于留下数据 —— 被打断是番茄钟最常见的真实结局，
+   * 不记下来就永远无法回答「你通常倒在第几分钟」。
+   * 只记专注阶段：打断休息没有分析价值，徒增流水账。
+   */
+  const markInterrupted = useCallback(() => {
+    if (startedAtRef.current && mode === FOCUS) {
+      const at = Date.now()
+      cbRef.current?.({
+        mode,
+        at,
+        startedAt: startedAtRef.current,
+        durationSec: totalRef.current,
+        elapsedSec: Math.max(0, totalRef.current - remaining),
+        completed: false
+      })
+    }
+    const next = advanceOnSkip({ mode, focusCount }, settings)
+    if (next.focusCount !== focusCount) setFocusCount(next.focusCount)
+    gotoPhase(next.mode, false)
+  }, [mode, focusCount, remaining, settings, gotoPhase])
+
   const resetCount = useCallback(() => {
     setFocusCount(0)
     gotoPhase(FOCUS, false)
@@ -135,6 +158,7 @@ export function usePomodoro(settings = DEFAULT_SETTINGS, onPhaseComplete) {
     toggle,
     reset,
     skip,
+    markInterrupted,
     resetCount
   }
 }

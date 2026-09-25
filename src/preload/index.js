@@ -14,7 +14,13 @@ const api = {
   records: {
     list: () => ipcRenderer.invoke('records:list'),
     append: (rec) => ipcRenderer.invoke('records:append', rec),
-    clear: () => ipcRenderer.invoke('records:clear') // v0.2 清空历史
+    replace: (list) => ipcRenderer.invoke('records:replace', list), // 导入 / 换目录后整表回写
+    clear: () => ipcRenderer.invoke('records:clear'), // v0.2 清空历史
+    where: () => ipcRenderer.invoke('records:where') // 当前历史记录文件的实际路径
+  },
+  data: {
+    openJson: () => ipcRenderer.invoke('data:openJson'), // 选一个导出文件，内容交回渲染层解析
+    pickDir: () => ipcRenderer.invoke('data:pickDir') // 选一个目录作为历史记录的新家
   },
   settings: {
     // v0.2 设置：主进程白名单校验后持久化

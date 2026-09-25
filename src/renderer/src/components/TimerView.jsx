@@ -19,6 +19,8 @@ const RING_COLOR = { focus: '#E8685A', short: '#6BA368', long: '#5B8FB0' }
 export default function TimerView({ settings, onPhaseComplete, onOpenStats, onOpenSettings }) {
   const p = usePomodoro(settings, onPhaseComplete)
   const litDots = p.focusCount % settings.longEvery
+  // 只有真的开始跑过才谈得上「中断」；没起步时这个按钮没有意义
+  const hasProgress = p.running || p.remaining !== p.total
 
   return (
     <div className={`stage mode-${p.mode}`}>
@@ -51,6 +53,11 @@ export default function TimerView({ settings, onPhaseComplete, onOpenStats, onOp
         </button>
         <div className="controls-sub">
           <button className="btn-ghost" onClick={p.reset}>重置</button>
+          {hasProgress && (
+            <button className="btn-ghost" onClick={p.markInterrupted} title="记下这次被打断了，然后进入下一阶段">
+              标记中断
+            </button>
+          )}
           <button className="btn-ghost" onClick={p.skip}>跳过</button>
         </div>
       </div>

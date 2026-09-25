@@ -1,6 +1,6 @@
 // 统计纯逻辑单元测试：node test-stats.mjs
 import assert from 'node:assert/strict'
-import { dayKey, mondayStart, summarize, dailyFocusBuckets, fmtDuration } from './src/renderer/src/core/stats.js'
+import { dayKey, mondayStart, summarize, dailyFocusBuckets, interruptStats, fmtDuration } from './src/renderer/src/core/stats.js'
 
 let n = 0
 const ok = (msg) => {
@@ -69,6 +69,66 @@ const monthStart = new Date(2026, 8, 1, 10, 0).getTime()
 const buckets2 = dailyFocusBuckets([mk('focus', monthStart)], 7, new Date(2026, 8, 1, 23, 0).getTime())
 assert.equal(buckets2[6].count, 1)
 ok('dailyFocusBuckets 正确处理跨月/月首')
+
+// ---- interruptStats ----
+// 中断记录：completed:false，durationSec 仍是计划时长，elapsedSec 才是实际坚持的
+const brk = (endedAt, elapsedSec) => ({
+  id: String(endedAt),
+  mode: 'focus',
+  startedAt: endedAt - 1500 * 1000,
+  endedAt,
+  durationSec: 1500,
+  completed: false,
+  elapsedSec
+})
+const at = (h, mi) => new Date(2026, 8, 24, h, mi).getTime()
+
+const iStats = interruptStats(
+  [
+    todayRec,
+    todayRec2, // 2 个完成
+    brk(at(10, 0), 1080), // 倒在 18 分
+    brk(at(11, 0), 1080),
+    brk(at(12, 0), 1080),
+    brk(at(13, 0), 300), // 倒在 5 分
+    brk(at(14, 0), 300),
+    breakRec // 休息记录不该进统计
+  ],
+  7,
+  NOW
+)
+assert.equal(iStats.completed, 2)
+assert.equal(iStats.interrupted, 5)
+assert.equal(iStats.total, 7)
+assert.equal(iStats.peakMinute, 18) // 出现最多的倒下时刻
+assert.ok(Math.abs(iStats.ratio - 5 / 7) < 1e-9)
+assert.equal(iStats.avgElapsedSec, (1080 * 3 + 300 * 2) / 5)
+ok('interruptStats 分开计数完成/中断，并给出倒下的时刻')
+
+// 并列时取更早的那个 —— 更早中断更值得提醒
+const tie = interruptStats([brk(at(10, 0), 180), brk(at(11, 0), 600)], 7, NOW)
+assert.equal(tie.peakMinute, 3)
+ok('interruptStats 峰值并列时取更早的时刻')
+
+// 窗口外的记录不计入
+const outside = interruptStats([brk(new Date(2026, 8, 10, 10, 0).getTime(), 900)], 7, NOW)
+assert.equal(outside.total, 0)
+assert.equal(outside.peakMinute, null)
+ok('interruptStats 只统计近 N 天')
+
+// 空数据不得出现 NaN / 除零
+const zero = interruptStats([], 7, NOW)
+assert.equal(zero.ratio, 0)
+assert.equal(zero.avgElapsedSec, 0)
+assert.equal(zero.peakMinute, null)
+ok('interruptStats 空数据不产生 NaN')
+
+// 老记录没有 elapsedSec 字段，不能算崩
+const legacy = interruptStats([{ ...brk(at(10, 0), 1080), elapsedSec: undefined }], 7, NOW)
+assert.equal(legacy.interrupted, 1)
+assert.equal(legacy.avgElapsedSec, 0)
+assert.equal(legacy.peakMinute, 1) // 缺失按 0 秒处理，落到第 1 分钟而不是 NaN
+ok('interruptStats 容忍缺 elapsedSec 的旧记录')
 
 // ---- fmtDuration ----
 assert.equal(fmtDuration(0), '0 分钟')

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, shell, ipcMain, Tray, Menu, Notification, dialog, nativeImage } from 'electron'
-import { join } from 'path'
+import { join, isAbsolute } from 'path'
 import fs from 'node:fs'
 import Store from 'electron-store'
 
@@ -12,22 +12,54 @@ app.setName('pomodoro-desktop')
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) process.exit(0)
 
-// M4: 历史记录持久化（JSON 落盘在系统 userData 目录，不进仓库）
-// 数据模型: { id, mode, startedAt, endedAt, durationSec, completed }
-const history = new Store({ name: 'pomodoro-history', defaults: { records: [] } })
+// M4: 历史记录持久化（JSON 落盘，不进仓库）
+// 数据模型: { id, mode, startedAt, endedAt, durationSec, completed, elapsedSec? }
+// 默认落在 userData；用户可用 dataDir 设置把它指到自己的同步目录（Dropbox/iCloud/Syncthing），
+// 于是「多设备同步」不需要后端、不需要账号、也不需要存任何凭据 —— 文件归用户自己管。
+let history = null
 
 const VALID_MODES = new Set(['focus', 'short', 'long'])
+const MAX_RECORDS = 20000 // 防无限增长，保留最近 2 万条
+
+// 主进程侧的独立校验：字段逐个白名单挑出来，不让渲染层往记录里塞任意键。
+// 与 core/export.js 的 normalizeRecord 有意重复 —— 那一道是边界，不是复用点。
+function cleanRecord(rec) {
+  if (!rec || typeof rec !== 'object') return null
+  if (!VALID_MODES.has(rec.mode)) return null
+  if (typeof rec.startedAt !== 'number' || !Number.isFinite(rec.startedAt)) return null
+  if (typeof rec.endedAt !== 'number' || !Number.isFinite(rec.endedAt)) return null
+  if (typeof rec.durationSec !== 'number' || !Number.isFinite(rec.durationSec)) return null
+  const out = {
+    id: rec.id === undefined || rec.id === null ? String(Date.now()) : String(rec.id),
+    mode: rec.mode,
+    startedAt: rec.startedAt,
+    endedAt: rec.endedAt,
+    durationSec: rec.durationSec,
+    completed: rec.completed === true
+  }
+  if (typeof rec.elapsedSec === 'number' && Number.isFinite(rec.elapsedSec)) out.elapsedSec = rec.elapsedSec
+  return out
+}
 
 // ---- v0.2 设置持久化 ----
 // 数值范围与 renderer 的输入约束保持一致；bool 一律 !! 归一
 const SETTINGS_DEFAULTS = {
   focus: 25, short: 5, long: 15, longEvery: 4,
-  autoStart: false, sound: true, notify: true, minimizeToTray: true
+  autoStart: false, sound: true, notify: true, minimizeToTray: true,
+  dataDir: '' // 空 = 用系统 userData 目录
 }
 const SETTINGS_NUM = { focus: [1, 180], short: [1, 60], long: [1, 180], longEvery: [1, 10] }
 const SETTINGS_BOOL = ['autoStart', 'sound', 'notify', 'minimizeToTray']
 
 const settingsStore = new Store({ name: 'pomodoro-settings', defaults: SETTINGS_DEFAULTS })
+
+// 只接受绝对路径；相对路径可以拼出 userData 之外的任意位置，一律拒绝
+function validDataDir(v) {
+  if (typeof v !== 'string') return null
+  const s = v.trim()
+  if (!s) return ''
+  return isAbsolute(s) ? s : null
+}
 
 function sanitizeSettings(raw) {
   const out = {}
@@ -41,45 +73,99 @@ function sanitizeSettings(raw) {
   for (const k of SETTINGS_BOOL) {
     if (raw[k] !== undefined) out[k] = !!raw[k]
   }
+  if (raw.dataDir !== undefined) {
+    const dir = validDataDir(raw.dataDir)
+    if (dir !== null) out.dataDir = dir
+  }
   return out
 }
 
 function effectiveSettings() {
   const merged = { ...SETTINGS_DEFAULTS }
-  for (const k of [...Object.keys(SETTINGS_NUM), ...SETTINGS_BOOL]) {
+  for (const k of [...Object.keys(SETTINGS_NUM), ...SETTINGS_BOOL, 'dataDir']) {
     const v = settingsStore.get(k)
     if (v !== undefined) merged[k] = v
   }
   return merged
 }
 
+// 历史库按当前 dataDir 打开。切换目录 = 换文件，Conf 会自动读取该目录下的既有文件，
+// 所以目标目录里已有记录时不会凭空冒出来，合并由渲染层用 core/export.js 的纯函数完成。
+function createHistoryStore() {
+  const dir = String(settingsStore.get('dataDir') || '').trim()
+  const opts = { name: 'pomodoro-history', defaults: { records: [] } }
+  if (dir) opts.cwd = dir
+  return new Store(opts)
+}
+
+function historyPath() {
+  try {
+    return history.path
+  } catch {
+    return ''
+  }
+}
+
 function registerIpc() {
   ipcMain.handle('records:list', () => history.get('records', []))
   ipcMain.handle('records:append', (_e, rec) => {
-    // 主进程侧做最低限度校验，renderer 传入的数据不可全信
-    if (
-      !rec ||
-      !VALID_MODES.has(rec.mode) ||
-      typeof rec.startedAt !== 'number' ||
-      typeof rec.endedAt !== 'number' ||
-      typeof rec.durationSec !== 'number'
-    ) {
-      return false
-    }
+    const clean = cleanRecord(rec)
+    if (!clean) return false
     const records = history.get('records', [])
-    records.push({ ...rec, id: String(rec.id ?? Date.now()), completed: rec.completed === true })
-    history.set('records', records.slice(-20000)) // 防无限增长，保留最近 2 万条
+    records.push(clean)
+    history.set('records', records.slice(-MAX_RECORDS))
     return true
   })
+  // 导入 / 换目录后整表回写。合并去重是渲染层 core/export.js 的纯函数职责，
+  // 这里仍逐条重校验：来自渲染层的数据不可全信。
+  ipcMain.handle('records:replace', (_e, list) => {
+    if (!Array.isArray(list)) return { ok: false, error: '不是数组' }
+    const clean = list.map(cleanRecord).filter(Boolean)
+    history.set('records', clean.slice(-MAX_RECORDS))
+    return { ok: true, count: clean.length, dropped: list.length - clean.length }
+  })
+  ipcMain.handle('records:where', () => historyPath())
   ipcMain.handle('records:clear', () => {
     history.set('records', [])
     return true
   })
 
+  // 选一个导出的 JSON 文件并把内容交给渲染层解析
+  ipcMain.handle('data:openJson', async () => {
+    showWindow()
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title: '选择要导入的记录文件',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON 数据', extensions: ['json'] }]
+    })
+    if (canceled || !filePaths?.[0]) return { ok: false, canceled: true }
+    try {
+      const text = fs.readFileSync(filePaths[0], 'utf8')
+      return { ok: true, path: filePaths[0], text }
+    } catch (err) {
+      return { ok: false, error: err.message }
+    }
+  })
+
+  // 选一个目录作为历史记录的新家
+  ipcMain.handle('data:pickDir', async () => {
+    showWindow()
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title: '选择历史记录存放目录',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (canceled || !filePaths?.[0]) return { ok: false, canceled: true }
+    return { ok: true, path: filePaths[0] }
+  })
+
   ipcMain.handle('settings:get', () => effectiveSettings())
   ipcMain.handle('settings:set', (_e, patch) => {
     const clean = sanitizeSettings(patch)
+    const dirChanged = clean.dataDir !== undefined && clean.dataDir !== settingsStore.get('dataDir')
     for (const [k, v] of Object.entries(clean)) settingsStore.set(k, v)
+    if (dirChanged) history = createHistoryStore()
     return effectiveSettings()
   })
 
@@ -279,6 +365,17 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // 自定义目录可能不可写、已被删除、或是 OneDrive 的按需占位符；
+  // 打不开就退回默认目录并提示，绝不让应用起不来。
+  try {
+    history = createHistoryStore()
+  } catch (e) {
+    console.warn('[history] 打开自定义目录失败，退回默认目录:', e.message)
+    try {
+      settingsStore.set('dataDir', '')
+    } catch { /* 设置本身写不动就没法了 */ }
+    history = createHistoryStore()
+  }
   registerIpc()
   createWindow()
   createTray()

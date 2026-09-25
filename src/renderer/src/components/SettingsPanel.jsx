@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { toJson, toCsv, defaultName } from '../core/export'
+import { useState, useEffect, useCallback } from 'react'
+import { toJson, toCsv, defaultName, fromExport, mergeRecords } from '../core/export'
 import { useConfirm } from './Confirm'
 
 // 时长类设置：本地编辑，点「保存」才落库（主进程再校验一次）
@@ -93,6 +93,51 @@ export default function SettingsPanel({ settings, onSave, onBack, bridge, record
     flash('记录已清空')
   }
 
+  // 历史记录文件的实际路径（自定义目录时指向那里）
+  const [dataPath, setDataPath] = useState('')
+  const canPickDir = typeof window !== 'undefined' && !!window.electronAPI?.data?.pickDir
+  const canImport = typeof window !== 'undefined' && !!window.electronAPI?.data?.openJson
+
+  const refreshPath = useCallback(() => {
+    window.electronAPI?.records?.where?.().then((p) => setDataPath(String(p || ''))).catch(() => {})
+  }, [])
+  useEffect(() => {
+    refreshPath()
+  }, [refreshPath])
+
+  const doImport = async () => {
+    const res = await window.electronAPI.data.openJson()
+    if (res?.canceled) return
+    if (!res?.ok) return flash(res?.error || '无法读取该文件')
+    const parsed = fromExport(res.text)
+    if (!parsed.ok) return flash(parsed.error)
+    if (!parsed.records.length) return flash('文件里没有可用记录')
+    const cur = await window.electronAPI.records.list()
+    const m = mergeRecords(cur, parsed.records)
+    await window.electronAPI.records.replace(m.records)
+    onRecordsChanged()
+    flash(`已导入 ${m.added} 条${parsed.skipped ? ` · 跳过 ${parsed.skipped} 条不合格式` : ''}`)
+  }
+
+  // 换目录后两边可能各有记录，取并集回写，避免任何一边的历史被"切"没
+  const switchDir = async (dir) => {
+    const before = await window.electronAPI.records.list()
+    const ok = await onSave({ dataDir: dir })
+    if (!ok) return flash('切换失败')
+    const after = await window.electronAPI.records.list()
+    const m = mergeRecords(before, after)
+    await window.electronAPI.records.replace(m.records)
+    onRecordsChanged()
+    refreshPath()
+    flash(dir ? '记录目录已切换' : '已回到默认目录')
+  }
+
+  const doChangeDir = async () => {
+    const pick = await window.electronAPI.data.pickDir()
+    if (!pick?.ok) return
+    await switchDir(pick.path)
+  }
+
   // 清空后经 onRecordsChanged 通知 App 刷新统计
 
   return (
@@ -134,9 +179,28 @@ export default function SettingsPanel({ settings, onSave, onBack, bridge, record
         <div className="set-data-row">
           <button className="btn-ghost" onClick={() => doExport('json')}>导出 JSON</button>
           <button className="btn-ghost" onClick={() => doExport('csv')}>导出 CSV</button>
+          {canImport && <button className="btn-ghost" onClick={doImport}>导入…</button>}
           <button className="btn-danger btn-sm" onClick={doClear}>清空记录</button>
         </div>
         <p className="set-note">共 {records?.length || 0} 条记录 · 全部保存在本机，不会上传。</p>
+
+        {dataPath && (
+          <div className="set-datadir">
+            <span className="set-label">历史记录文件</span>
+            <code className="set-path" title={dataPath}>{dataPath}</code>
+            {canPickDir && (
+              <div className="set-data-row">
+                <button className="btn-ghost" onClick={doChangeDir}>改存到别的目录…</button>
+                {!!settings.dataDir && <button className="btn-ghost" onClick={() => switchDir('')}>回到默认目录</button>}
+              </div>
+            )}
+            <p className="set-note">
+              把这个文件放进 Dropbox / iCloud / Syncthing 的同步目录，就能多台机器共用同一份历史，
+              不需要账号也没有后端。用 OneDrive 的话请把该文件夹设为「始终保留在本设备」——
+              它的「按需文件」在未下载时只是个占位符，读起来会失败。
+            </p>
+          </div>
+        )}
       </section>
 
       <div className="set-foot">{savedTip}</div>

@@ -1,5 +1,6 @@
 // 统计纯函数 —— 与 core/timer.js 同一分层原则：无 React / 浏览器依赖，可单测
-// 记录数据模型: { id, mode, startedAt, endedAt, durationSec, completed }
+// 记录数据模型: { id, mode, startedAt, endedAt, durationSec, completed, elapsedSec? }
+// durationSec 恒为该阶段的「计划时长」；elapsedSec 仅中断记录携带，表示实际坚持了多久
 
 export function dayKey(ts) {
   const d = ts instanceof Date ? ts : new Date(ts)
@@ -70,6 +71,57 @@ export function dailyFocusBuckets(records, days = 7, now = Date.now()) {
     }
   }
   return out
+}
+
+/**
+ * 近 days 天内专注阶段的「完成 / 中断」画像。
+ * 中断不是一种失败，而是一个有信息量的结果：它回答「你通常倒在第几分钟」。
+ * 只统计 mode==='focus' 的记录；completed 非 true 即视为中断。
+ */
+export function interruptStats(records, days = 7, now = Date.now()) {
+  const from = new Date(now)
+  from.setHours(0, 0, 0, 0)
+  from.setDate(from.getDate() - (days - 1))
+  const fromTs = from.getTime()
+
+  let completed = 0
+  let interrupted = 0
+  let elapsedSum = 0
+  const perMinute = new Map()
+
+  for (const r of records || []) {
+    if (!r || r.mode !== 'focus') continue
+    if (!(r.startedAt >= fromTs)) continue
+    if (r.completed === true) {
+      completed++
+      continue
+    }
+    interrupted++
+    const sec = Number.isFinite(r.elapsedSec) && r.elapsedSec > 0 ? r.elapsedSec : 0
+    elapsedSum += sec
+    const min = Math.max(1, Math.round(sec / 60))
+    perMinute.set(min, (perMinute.get(min) || 0) + 1)
+  }
+
+  const total = completed + interrupted
+  // 取出现次数最多的「倒下分钟数」；并列时取更早的那个（更早中断更值得提醒）
+  let peakMinute = null
+  let peakCount = 0
+  for (const [min, c] of [...perMinute.entries()].sort((a, b) => a[0] - b[0])) {
+    if (c > peakCount) {
+      peakCount = c
+      peakMinute = min
+    }
+  }
+
+  return {
+    completed,
+    interrupted,
+    total,
+    ratio: total ? interrupted / total : 0,
+    avgElapsedSec: interrupted ? elapsedSum / interrupted : 0,
+    peakMinute
+  }
 }
 
 /** 分钟数 → 人类可读时长（<60 用分钟，否则小时保留一位小数） */

@@ -21,8 +21,8 @@ const CARDS = [
   { key: 'month', label: '本月', emoji: '🍀' }
 ]
 
-// summary/daily/bridge 由父级进入本页时刷新后传入（App 的 view-stats 分支）
-export default function StatsPanel({ summary, daily, onBack, bridge }) {
+// summary/daily/interrupt/bridge 由父级进入本页时刷新后传入（App 的 view-stats 分支）
+export default function StatsPanel({ summary, daily, interrupt, onBack, bridge }) {
   const chartData = useMemo(
     () => ({
       labels: daily.map((d) => d.label),
@@ -119,11 +119,27 @@ export default function StatsPanel({ summary, daily, onBack, bridge }) {
         ) : (
           <div className="stats-empty">
             <div className="stats-empty-emoji">🌱</div>
-            <div>还没有专注记录</div>
+            <div>还没有走完的番茄</div>
             <div className="stats-empty-sub">完成第一个番茄后，这里会长出小图表</div>
           </div>
         )}
       </div>
+
+      {interrupt && interrupt.total > 0 && (
+        <div className="stats-interrupt">
+          <div className="stats-interrupt-figure">
+            <span className="stats-interrupt-num">{interrupt.interrupted}</span>
+            <span className="stats-interrupt-unit">次专注被打断<em>近 7 天</em></span>
+          </div>
+          <p className="stats-interrupt-note">
+            {interrupt.interrupted === 0
+              ? '没有一个番茄中途断掉，这很难得。'
+              : interrupt.peakMinute
+                ? `多数倒在第 ${interrupt.peakMinute} 分钟。那个点通常不是你不够专心，是真的有事来了。`
+                : '被打断的时刻很零散，说明干扰还没成规律 —— 先记着，别急着改。'}
+          </p>
+        </div>
+      )}
 
       {!bridge && <div className="stats-hint">⚠️ 当前环境未连接到本地存储，统计仅供预览</div>}
     </div>
