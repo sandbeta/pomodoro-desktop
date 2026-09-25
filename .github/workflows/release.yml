@@ -1,0 +1,56 @@
+name: 发布 Release
+
+# 打 tag 即自动构建并挂到该 tag 的 Release 上。
+# 存在的意义：82MB 的 exe 靠人在网页上拖，既繁琐又依赖猜对 GitHub 前端的 DOM。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的已有 tag（含 v），例如 v0.3.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: 检出对应 tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # 仓库自带 .npmrc 指向 npmmirror（为国内网络准备），在 GitHub runner 上反而更慢且不稳，
+      # 这里用 CLI 参数覆盖 —— CLI 优先级高于项目 .npmrc。
+      - name: 安装依赖
+        run: npm ci --registry=https://registry.npmjs.org
+
+      # 「改 core 必须同步跑单测」这条规矩，到这里才算有强制手段
+      - name: 单元测试
+        run: npm test
+
+      - name: 构建并打包
+        run: npm run dist
+
+      - name: 上传到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          # 匹配不到就报错，而不是静默发布一个空 Release
+          fail_on_unmatched_files: true
+          files: |
+            dist/番茄钟-便携版-*.exe
+            dist/番茄钟-安装包-*.exe
