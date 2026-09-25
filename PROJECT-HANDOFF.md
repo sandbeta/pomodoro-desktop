@@ -228,9 +228,12 @@ npm run dist
     两个坑：① 桩的校验规则要和 `src/main/index.js` 对齐，否则网页版比桌面版宽松，用户在两边会得到不同结果。② 想改页面尺寸时，应用自己的 `html, body, #root { height: 100% }` 会盖住你注入的 `<style>`（同特异度、`<link>` 在后面），必须加 `!important`。
     另外：桩**不要暴露 `data.pickDir`**，设置面板会因此自动隐藏「改存到别的目录」按钮 —— 比显示一个点了没反应的死控件好。`data.openJson` 则可以用隐藏 `<input type=file>` 实现，导入在浏览器里是真能用的。
 
-11. **GitHub Release 上传二进制无法自动化**
-    Release 编辑页收二进制的那个 input 是 `#releases-upload`（`class="sr-only"`），且被 GitHub 的组件反复重渲染 —— 搬进 body 也会被还原，始终进不了可访问性树，`upload_file` 拿不到它。工具栏那个 `#fc-release_body` 反倒能拿到，但它有扩展名白名单，`.exe` 直接被判 "We don't support that file type"。
-    结论：**82MB 的 exe 只能人工拖进 Release 页面**，或者上 GitHub Actions（ROADMAP #13）让 CI 构建并上传。
+11. **GitHub Release 上传二进制：别用改 DOM 的方式硬来**
+    Release 页收二进制的 input 是 `#releases-upload`（`class="sr-only"`，且被组件反复重渲染），进不了可访问性树，自动化工具拿不到它的 uid；工具栏那个 `#fc-release_body` 能拿到，但它有扩展名白名单，`.exe` 会被判 "We don't support that file type"。
+    **更要命的坑**：如果为了让 input 显形而去 `remove()` 别的节点、把它从父容器里搬走，文件可能真的挂上去，但会被判 "This file is hidden" / "This file is empty"。这个被拒却已登记的空壳附件会写进**服务端草稿**（表单含 `release[draft]` 与 `release[release_assets_attributes][]`），导致之后每次 Publish 都静默失败，页面上只留一句 "There was an error creating your Release."。
+    排查顺序：先读 `.flash-error` 全部条目找真因 → 点掉 `.js-release-remove-file` 的残留附件 → 再提交。
+    另外，判断 Release 到底建没建成要查 `GET /repos/<owner>/<repo>/releases` —— `/releases/tag/<v>` 返回 200 只说明 **tag** 存在，没有 Release 时同样返回 200。
+    结论：82MB 的 exe 走人工拖拽，或直接上 GitHub Actions（ROADMAP #13）让 CI 构建并上传。
 
 12. **Private 仓库开不了 GitHub Pages**
     免费套餐下 Pages 要求仓库公开，设置页会写「Upgrade or make this repository public to enable Pages」。所以本项目要 Pages 就必须 Public。
