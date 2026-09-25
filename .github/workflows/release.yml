@@ -92,7 +92,7 @@ jobs:
           gh release view "$TAG" --json assets -q '.assets[].name' | while read -r n; do
             case "$n" in
               pomodoro-desktop-portable-*.exe|pomodoro-desktop-installer-*.exe|*source.zip|*source.tar.gz) ;;
-              *) echo "删除: $n"; gh release delete-asset "$TAG" "$n" --yes ;;
+              *) echo "删除: $n"; gh release delete-asset --yes "$TAG" -- "$n" ;;
             esac
           done
 
