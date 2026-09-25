@@ -51,12 +51,17 @@ jobs:
       - name: 打包 Windows 产物
         run: npx electron-builder --win --publish never
 
+      # 用官方 gh CLI 上传，而不是 softprops/action-gh-release。
+      # 原因：本项目的产物名含中文（番茄钟-便携版-0.3.0.exe），而 softprops 会先按
+      # URL 安全字符清洗上传名 —— 两个中文名清洗后塌缩成同一个 "-.-0.3.0.exe"，
+      # 于是互相覆盖，只剩一个乱名资产，随后它去 PATCH 恢复原名时目标已不存在，报 404。
+      # gh release upload 走的是与网页上传相同的路径，能正确保留中文名。
       - name: 上传到 Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          # 匹配不到就报错，而不是静默发布一个空 Release
-          fail_on_unmatched_files: true
-          files: |
-            dist/番茄钟-便携版-*.exe
-            dist/番茄钟-安装包-*.exe
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" dist/*.exe --clobber
+          gh release view "$TAG"
