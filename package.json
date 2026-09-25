@@ -1,6 +1,6 @@
 {
   "name": "pomodoro-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "一款温馨治愈的番茄钟桌面应用 · A cozy Pomodoro timer for desktop",
   "main": "./out/main/index.js",
   "author": "shafeifan",
@@ -10,6 +10,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "test": "node test-timer.mjs && node test-stats.mjs && node test-export.mjs",
     "postinstall": "electron-builder install-app-deps",
     "dist": "electron-vite build && electron-builder --win"
   },

@@ -1,7 +1,10 @@
 # 番茄钟桌面应用 · 项目交接文档
 
-> 最后更新：2026-09-24　状态：**v0.2（M1–M6 全部）已交付，下一步 M7/ROADMAP**
-> 项目路径：`pomodoro-desktop/`（已整体迁移至 **E:\pomodoro-desktop**）
+> 最后更新：2026-09-26　状态：**v0.3.0（M1–M7）打包中；GitHub 远程与 Pages 已上线**
+> 项目路径：`E:\pomodoro-desktop`
+> 远程仓库：<https://github.com/sandbeta/pomodoro-desktop>（Public）
+> 项目主页：<https://sandbeta.github.io/pomodoro-desktop/>　网页试用：<https://sandbeta.github.io/pomodoro-desktop/demo/>
+> Git 身份：提交作者名 `shafeifan`（笔名），邮箱 `sandbeta@users.noreply.github.com`（GitHub 账号是 **sandbeta**，靠邮箱关联账号，署名可保留笔名）
 
 ---
 
@@ -42,9 +45,13 @@ pomodoro-desktop/
 ├─ test-stats.mjs                 # 统计纯函数的单元测试 (node test-stats.mjs)
 ├─ test-export.mjs                # 导出序列化的单元测试 (node test-export.mjs)
 ├─ build/                         # 应用图标（icon.ico 多尺寸 BMP / icon.png 供托盘用）
+├─ docs/                          # GitHub Pages 站点（源 = master 分支 /docs 目录）
+│  ├─ index.html                  # 项目主页/落地页，自包含无构建
+│  ├─ assets/                     # 落地页用的应用截图（420×640 真机比例）
+│  └─ demo/                       # 网页试用版 = out/renderer 产物 + electronAPI 桩（见 §6.10）
 └─ src/
    ├─ main/index.js               # 主进程：窗口、单实例锁、托盘、通知、设置/历史/导出 IPC、GPU 自适应策略
-   ├─ preload/index.js            # contextBridge：records(list/append/clear) + settings(get/set) + notify + exportSave
+   ├─ preload/index.js            # contextBridge：records(list/append/replace/clear/where) + data(openJson/pickDir) + settings(get/set) + notify + exportSave
    └─ renderer/                   # React 前端
       ├─ index.html
       └─ src/
@@ -53,7 +60,7 @@ pomodoro-desktop/
          ├─ index.css             # 设计 tokens + 全部视觉样式 + 动画（含统计/设置/确认弹层）
          ├─ core/timer.js         # ★纯决策逻辑（阶段切换/长休息判定），无 React 依赖
          ├─ core/stats.js         # ★纯统计逻辑（日/周/月聚合、7 天分桶、时长格式化）
-         ├─ core/export.js        # ★纯导出逻辑（toJson/toCsv 转义/defaultName）
+         ├─ core/export.js        # ★纯导入导出（toJson/toCsv 转义 · fromExport 解析 · mergeRecords 跨设备合并去重 · defaultName）
          ├─ hooks/usePomodoro.js  # 计时引擎 hook（settings 由外部驱动，记录阶段 startedAt）
          ├─ hooks/useStats.js     # 统计数据 hook（经 IPC 拉取/追加记录并聚合）
          ├─ hooks/useSettings.js  # 设置 hook（主进程加载/保存，ready 标志）
@@ -109,7 +116,25 @@ electron-vite 三段结构搭好，`npm run dev` 能弹出窗口、React 交互�
 - 主进程加 `app.setName('pomodoro-desktop')`，让**开发版 / 安装包 / 便携版共用同一份** `Roaming\pomodoro-desktop\pomodoro-history.json` 历史记录。
 - `npm run dist` 产出（当前 v0.2.0）：`dist\番茄钟-便携版-0.2.0.exe`（双击即用，约 78MB）、`dist\番茄钟-安装包-0.2.0.exe`（NSIS，可选安装目录+桌面快捷方式）。
 - 便携版已实测：双击 → 窗口正常弹出、界面渲染、标题栏番茄图标正确。
-- **未完成**：GitHub 远程仓库与 Actions 自动发布（见 §7 / ROADMAP）。
+- **未完成**：GitHub Actions 自动发布（见 §7 / ROADMAP #13）。远程仓库与 Pages 已于 2026-09-25 建好。
+
+### ✅ M7（v0.3）— 中断记录 / 数据可迁移 / 网页试用
+
+- **中断成为一种被记录的结果**。此前 `skip()` / `reset()` 根本不写记录，schema 里的 `completed` 字段**恒为 true**，统计层那句「只计 completed 的 focus」是在过滤一个不可能出现的值 —— 最有信息量的数据被整个扔掉了。现在计时视图新增「标记中断」按钮（仅在真的起步后出现），落一条 `completed:false` + `elapsedSec` 的记录再进入下一阶段。
+  - **`durationSec` 语义保持不变**（仍是该阶段的「计划时长」），实际坚持时长另存 `elapsedSec`。这样 `summarize` / `dailyFocusBuckets` 一行都不用改就能正确排除中断。
+  - `core/stats.js` 新增 `interruptStats(records, days)`：完成/中断分别计数、中断占比、平均坚持秒数、以及**「多数倒在第几分钟」**（并列取更早的那个，因为更早中断更值得提醒）。StatsPanel 底部渲染成一块不评判的提示。
+  - 中断**不弹**「完成」通知：`App.jsx` 的 `handlePhaseComplete` 现在按 `info.completed` 分流。
+  - 空状态文案由「还没有专注记录」改成「还没有走完的番茄」—— 有了中断记录之后，前者会变成假话。
+- **数据可迁移**。新增 `dataDir` 设置（默认空 = userData）与导入能力。用户把历史文件指到自己的同步目录即可获得多设备共用，**无账号、无后端、不存凭据**，且完全符合 ROADMAP 的「不做云账号体系」。
+  - 解析与合并放在 `core/export.js`（纯函数、可单测）：`fromExport()` 接受 `{app,version,records}` 包装或裸数组，坏输入返回错误不抛异常；`mergeRecords()` 取并集升序、上限 2 万条。
+  - **合并身份用 `startedAt|mode|durationSec`，故意不含 `id`** —— id 落库时取 `Date.now()`，两台设备同一毫秒开始一个番茄会撞号，用 id 去重会静默丢掉另一台机器的记录。
+  - 导出格式升到 `version: 2`（CSV 多一列 `elapsed_sec`），**导入同时兼容 v1**。文件一旦交给用户保管就是公开契约，改一次断一次。
+  - 主进程 `cleanRecord()` 与 `core/export.js` 的 `normalizeRecord()` **有意重复**：那是边界校验，不是复用点。顺带把 `records:append` 从 `{...rec}` 展开改成逐字段白名单，渲染层不能再往记录里塞任意键。
+  - 换目录流程由渲染层编排：读旧目录 → `settings:set({dataDir})`（主进程重建 Store）→ 读新目录 → `mergeRecords` → `records:replace`。这样任何一边的历史都不会被「切」没。
+  - `createHistoryStore()` 外面包了 try/catch：自定义目录可能不可写、已删除、或是 OneDrive 的按需占位符 —— 打不开就退回默认目录，绝不让应用起不来。
+- **网页版在线试用 + 项目主页**。`docs/index.html` 是落地页，`docs/demo/` 是可直接使用的网页版。
+- **修掉两个缺陷**：① `.view-host` 在 CSS 里**完全没有规则**（只有 `.view-hidden`），断掉 `#root → .stage` 的 `height:100%` 链，实测视口 1144px 时 stage 只有 554px。专注态因窗口底色 `#FFF6EE` 与 `#fff1e8` 接近而看不出来，**休息阶段换色后窗口底部会露出一条不匹配的横带** —— 这是 M5 加包装层时引入的回归，M3 验收时还没有这层。② 休息阶段主按钮仍写「开始专注」，现按阶段显示「开始专注 / 开始休息」。
+- **单测从 17 组增至 33 组**（计时 5 + 统计 12 + 导入导出 16），并补了 `npm test` 脚本 —— 此前「改 core 必须同步跑单测」这条铁律只靠人肉记着。
 
 ---
 
@@ -124,10 +149,8 @@ env -u CHROME_CRASHPAD_PIPE_NAME -u ELECTRON_FORCE_RENDERER_ACCESSIBILITY npm ru
 # 生产构建（验证编译，产物在 out/）
 npm run build
 
-# 跑逻辑单测（计时 5 组 + 统计 7 组 + 导出 5 组）
-node test-timer.mjs
-node test-stats.mjs
-node test-export.mjs
+# 跑逻辑单测（计时 5 组 + 统计 12 组 + 导入导出 16 组 = 33 组）
+npm test
 
 # 打 Windows 双产物（安装包 + 便携版，需网络走镜像，见 §6.1/§6.9）
 # 前置：electron-builder 必须 ≥26（25.x 的 rcedit 缺陷见 §6.9）
@@ -139,7 +162,7 @@ npm run dist
 
 依赖通过 `.npmrc` 走 npmmirror。Node 版本已验证 v24.16.0。
 
-**日常使用（不开发）**：直接双击 `E:\pomodoro-desktop\dist\番茄钟-便携版-0.1.0.exe` 即可，无需 Node 环境；首次启动需等几秒（portable 自解压）。也可以跑一次安装包，之后从桌面/开始菜单的「番茄钟」快捷方式启动。
+**日常使用（不开发）**：到 Releases 页下载，或直接双击 `dist\番茄钟-便携版-<版本>.exe`，无需 Node 环境；首次启动需等几秒（portable 自解压）。也可以跑一次安装包，之后从桌面/开始菜单的「番茄钟」快捷方式启动。
 
 ---
 
@@ -200,24 +223,42 @@ npm run dist
    附带坑：electron-builder 25 解 winCodeSign-2.6.0 时，包内两个 macOS `.dylib` 符号链接在 Windows 无符号链接权限下创建失败，导致整个解压判为失败（其实 Windows 签名工具都已解出）。若再遇到：把 `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\<随机数字目录>` 改名为 `winCodeSign-2.6.0` 即可复用。
    （排查备忘：`build/icon.ico` 现用 16/32/48/256 多尺寸 BMP 编码。此前 PNG-in-ICO 版本经手动 rcedit 验证也能写入，故 ICO 编码格式不是上述失败的根因，升级 electron-builder 后两者皆可。）
 
+10. **在浏览器里跑渲染层（预览 / 截图 / 网页版）的正解**
+    `out/renderer` 本身就是个 React SPA，缺的只有 `window.electronAPI`。所以**不需要为网页版单独构建**：把 `out/renderer/` 拷出去，在 `<head>` 里那个 `<script type="module">` **之前**插一段普通 `<script>` 注入 electronAPI 桩即可（classic script 同步先跑，module 是 deferred，顺序天然正确）。
+    两个坑：① 桩的校验规则要和 `src/main/index.js` 对齐，否则网页版比桌面版宽松，用户在两边会得到不同结果。② 想改页面尺寸时，应用自己的 `html, body, #root { height: 100% }` 会盖住你注入的 `<style>`（同特异度、`<link>` 在后面），必须加 `!important`。
+    另外：桩**不要暴露 `data.pickDir`**，设置面板会因此自动隐藏「改存到别的目录」按钮 —— 比显示一个点了没反应的死控件好。`data.openJson` 则可以用隐藏 `<input type=file>` 实现，导入在浏览器里是真能用的。
+
+11. **GitHub Release 上传二进制无法自动化**
+    Release 编辑页收二进制的那个 input 是 `#releases-upload`（`class="sr-only"`），且被 GitHub 的组件反复重渲染 —— 搬进 body 也会被还原，始终进不了可访问性树，`upload_file` 拿不到它。工具栏那个 `#fc-release_body` 反倒能拿到，但它有扩展名白名单，`.exe` 直接被判 "We don't support that file type"。
+    结论：**82MB 的 exe 只能人工拖进 Release 页面**，或者上 GitHub Actions（ROADMAP #13）让 CI 构建并上传。
+
+12. **Private 仓库开不了 GitHub Pages**
+    免费套餐下 Pages 要求仓库公开，设置页会写「Upgrade or make this repository public to enable Pages」。所以本项目要 Pages 就必须 Public。
+
+13. **git 提交邮箱必须是 GitHub 认的那个**
+    作者名可以是笔名（`shafeifan`），但 GitHub 靠**邮箱**关联账号。本机曾长期用 `shafeifan@users.noreply.local` 这种假域名，导致 commit 不亮头像、不计入贡献图。正确值是 `sandbeta@users.noreply.github.com`（账号是 **sandbeta**）。仓库已用 `git config user.email` 固定，历史也已重写修正。
+
 ---
 
 ## 7. 待办里程碑
 
-### ⬜ M7（v0.3 候选）— 差异化与留存
-见 ROADMAP.md：任务标签、每日目标+连续天数、治愈白噪音（Web Audio 合成）、多主题配色包。
+### ✅ M6 — 开源仓库收尾（2026-09-25 完成）
+- GitHub 远程已建：`sandbeta/pomodoro-desktop`（Public），master + `v0.2.0` tag 已推送。
+- GitHub Pages 已上线（源 = `master` /docs）：项目主页 + 网页试用版，README 截图待补一项由落地页承担。
+- **仍待办**：Actions 自动发布（ROADMAP #13）—— 目前 82MB 的 exe 只能人工拖进 Release（见 §6.11）。
 
-### ⬜ M6（剩余）— 开源仓库收尾
-- README 截图待补（当前为纯文字版）；GitHub 远程仓库、Actions 自动 release。
-- （本地 git 仓库已建，v0.1/v0.2 代码与 ROADMAP 均已提交。）
+### ✅ M7（v0.3）— 中断记录 / 数据可迁移 / 网页试用
+见 §4 M7。ROADMAP 剩余候选：累积型专注花园、治愈白噪音、周报分享图、全局快捷键。
 
 ---
 
 ## 8. 当前验证状态（事实 vs 判断）
 
-**已确认（事实）**：计时 5/5 + 统计 7/7 + 导出 5/5 单测通过；`npm run build` 全绿；M4/M5 端到端实测通过（完成落库、设置持久化跨重启生效、托盘关窗存活、单实例唤回、前台通知抑制、1 分钟真实番茄走完自动落库+通知、设置页与主界面截图渲染确认）；M3 界面已由需求方验收通过（2026-09-24）；**v0.2.0 打包实测通过**（便携版双击启动、双图标、exe 与标题栏番茄图标正确）。
+**已确认（事实）**：`npm test` 全绿（计时 5 + 统计 12 + 导入导出 16 = 33 组）；`npm run build` 全绿；M4/M5 端到端实测通过（完成落库、设置持久化跨重启生效、托盘关窗存活、单实例唤回、前台通知抑制、1 分钟真实番茄走完自动落库+通知、设置页与主界面截图渲染确认）；M3 界面已由需求方验收通过（2026-09-24）；**v0.2.0 打包实测通过**（便携版双击启动、双图标、exe 与标题栏番茄图标正确）。
 
-**待确认（不确定项）**：① 导出保存对话框的「选择路径→确认写入」人工交互（自动化环境无法可靠操作模态框，IPC 链路与取消路径已验证）；② 托盘图标的目视确认（Win11 隐藏托盘区无法截图，但托盘对象创建与点击显隐逻辑已实测）；③ 设置页/统计页视觉观感细节待需求方验收。
+M7 补充实测：Electron 主进程真实启动（`did-finish-load` 触发、窗口可见、未崩在 `createHistoryStore()`），确认 `%APPDATA%` 既有历史未丢、settings 新增 `dataDir` 键；网页版端到端验证（起步 → 「标记中断」出现 → 落库 `{completed:false, elapsedSec, durationSec:1500}` → 阶段切短休息 → 不弹完成通知 → 统计显示「倒在第 N 分钟」且中断不计入番茄数）；`records:replace` 对非法 mode/类型逐条拒绝；导入件 `elapsedSec:1200` 正确显示为第 20 分钟；`.view-host` 修复后用 `elementFromPoint` 抽查视口最底行三点，全部命中 `.stage mode-short`（修复前会命中 body）。
+
+**待确认（不确定项）**：① 导出保存对话框与**导入文件选择框**的「选路径→确认」人工交互（自动化环境无法可靠操作原生模态框；IPC 链路、取消路径、解析与合并逻辑均已用注入方式验证）；② 托盘图标的目视确认（Win11 隐藏托盘区无法截图）；③ 设置页/统计页视觉观感细节待需求方验收；④ **「改存到别的目录」在真机上的完整往返尚未实测** —— 网页版故意不暴露该按钮，只有桌面版有，需要人工点一遍并验证两边记录被正确合并；⑤ v0.3.0 安装包/便携版尚未产出与实测（本次改动含主进程，须重新 `npm run dist` 后双击验一遍）。
 
 ---
 

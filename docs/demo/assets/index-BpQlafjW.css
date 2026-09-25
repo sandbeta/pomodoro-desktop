@@ -263,6 +263,12 @@ body {
 }
 
 /* 计时视图常挂载、非活动时隐藏（不丢倒计时） */
+/* App 用 .view-host 包住常挂载的计时视图；缺 height 会断开 #root → .stage 的
+   height:100% 链，使舞台只占内容高度 —— 休息阶段换色后，窗口底部会露出一条
+   与舞台不同色的横带（专注态因底色接近而看不出来）。 */
+.view-host {
+  height: 100%;
+}
 .view-hidden {
   display: none;
 }

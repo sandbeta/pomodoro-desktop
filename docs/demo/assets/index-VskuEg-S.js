@@ -7393,6 +7393,7 @@ function TimerView({ settings, onPhaseComplete, onOpenStats, onOpenSettings }) {
   const p2 = usePomodoro(settings, onPhaseComplete);
   const litDots = p2.focusCount % settings.longEvery;
   const hasProgress = p2.running || p2.remaining !== p2.total;
+  const startLabel = p2.mode === FOCUS ? "开始专注" : "开始休息";
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `stage mode-${p2.mode}`, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "halo" }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "top-actions", children: [
@@ -7408,7 +7409,7 @@ function TimerView({ settings, onPhaseComplete, onOpenStats, onOpenSettings }) {
       ] })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "controls", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: p2.toggle, children: p2.running ? "暂停一下" : "开始专注" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: p2.toggle, children: p2.running ? "暂停一下" : startLabel }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "controls-sub", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-ghost", onClick: p2.reset, children: "重置" }),
         hasProgress && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-ghost", onClick: p2.markInterrupted, title: "记下这次被打断了，然后进入下一阶段", children: "标记中断" }),

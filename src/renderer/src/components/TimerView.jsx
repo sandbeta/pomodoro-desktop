@@ -1,4 +1,5 @@
 import { usePomodoro } from '../hooks/usePomodoro'
+import { FOCUS } from '../core/timer'
 import ProgressRing from './ProgressRing'
 import { testChime } from '../utils/sound'
 
@@ -21,6 +22,7 @@ export default function TimerView({ settings, onPhaseComplete, onOpenStats, onOp
   const litDots = p.focusCount % settings.longEvery
   // 只有真的开始跑过才谈得上「中断」；没起步时这个按钮没有意义
   const hasProgress = p.running || p.remaining !== p.total
+  const startLabel = p.mode === FOCUS ? '开始专注' : '开始休息'
 
   return (
     <div className={`stage mode-${p.mode}`}>
@@ -49,7 +51,7 @@ export default function TimerView({ settings, onPhaseComplete, onOpenStats, onOp
 
       <div className="controls">
         <button className="btn-primary" onClick={p.toggle}>
-          {p.running ? '暂停一下' : '开始专注'}
+          {p.running ? '暂停一下' : startLabel}
         </button>
         <div className="controls-sub">
           <button className="btn-ghost" onClick={p.reset}>重置</button>
