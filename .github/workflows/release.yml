@@ -42,8 +42,14 @@ jobs:
       - name: 单元测试
         run: npm test
 
-      - name: 构建并打包
-        run: npm run dist
+      # 不用 npm run dist：发布流水线必须与「被检出的那个 tag 里写了什么脚本」解耦，
+      # 否则老 tag 里缺 --publish never 就会让 CI 去自建 Release（electron-builder
+      # 检测到 CI 会隐式发布，且 v26 只是警告、v27 才默认关闭）。
+      - name: 构建
+        run: npm run build
+
+      - name: 打包 Windows 产物
+        run: npx electron-builder --win --publish never
 
       - name: 上传到 Release
         uses: softprops/action-gh-release@v2
