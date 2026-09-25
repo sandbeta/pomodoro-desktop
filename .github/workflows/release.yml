@@ -56,12 +56,33 @@ jobs:
       # URL 安全字符清洗上传名 —— 两个中文名清洗后塌缩成同一个 "-.-0.3.0.exe"，
       # 于是互相覆盖，只剩一个乱名资产，随后它去 PATCH 恢复原名时目标已不存在，报 404。
       # gh release upload 走的是与网页上传相同的路径，能正确保留中文名。
+      # 上传前把中文产物名换成 ASCII。
+      # 实测：gh 以正确的 UTF-8 名上传时 uploads.github.com 直接回 404，
+      # 而把名字清洗成 ASCII 后能传成功 —— 这条 API 路径不接受非 ASCII 资产名。
+      # （网页 UI 走的是另一条路径，所以人工拖中文名的 exe 反而没问题。）
+      #
+      # 只在这里改名，不改 package.json 的 artifactName：发布流水线不应依赖
+      # 「被检出的那个 tag 里恰好写了什么」，而且本地构建保留中文名更好看。
       - name: 上传到 Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="${TAG#v}"
+          for f in dist/*.exe; do
+            base=$(basename "$f")
+            case "$base" in
+              *便携版*) new="pomodoro-desktop-portable-$VER.exe" ;;
+              *安装包*) new="pomodoro-desktop-installer-$VER.exe" ;;
+              *) new="$base" ;;
+            esac
+            if [ "$new" != "$base" ]; then
+              mv "$f" "dist/$new"
+              echo "改名: $base -> $new"
+            fi
+          done
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
           gh release upload "$TAG" dist/*.exe --clobber
+          echo "--- 最终资产 ---"
           gh release view "$TAG"
